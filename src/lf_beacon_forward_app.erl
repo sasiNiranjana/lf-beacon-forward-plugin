@@ -14,19 +14,30 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(lf_emqtt_online_status_submit_sup).
+-module(lf_beacon_forward_app).
 
--behaviour(supervisor).
+-behaviour(application).
 
--export([start_link/1]).
+%% Application callbacks
+-export([start/2, stop/1]).
 
--export([init/1]).
+%% Define table names for storing client details for beacon forwarding
+-define(C, beacon_clients).
+-define(I, beacon_clients_ip_table).
 
--define(M, lf_emqtt_online_status_submit).
+start(_Type, _Args) ->
+    ClientsTableId = ets:new(?C,[set,public]),
+    ClientsIPTableId = ets:new(?I,[bag,public]),
+    Tables = [beacon_tables,ClientsTableId,ClientsIPTableId],
+    {ok, Sup} = lf_beacon_forward_sup:start_link(Tables),
+    lf_beacon_forward:load(Tables),
+    {ok, Sup,Tables}.
 
-start_link(Tables) ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, [Tables]).
-
-init([Tables]) ->
-	{ok, {{one_for_one, 10, 100}, [
-{?M, {?M, start_link, [Tables]}, permanent, 5000, worker, [?M]}]}}.
+stop([beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    ets:delete(ClientsTableId),
+    ets:delete(ClientsIPTableId),
+    lf_beacon_forward:unload(),
+    ok;
+stop(_State) ->
+    lf_beacon_forward:unload(),
+    ok.

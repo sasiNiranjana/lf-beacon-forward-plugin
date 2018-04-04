@@ -14,7 +14,7 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(lf_emqtt_online_status_submit).
+-module(lf_beacon_forward).
 
 -behaviour(gen_server).
 
