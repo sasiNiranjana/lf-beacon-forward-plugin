@@ -28,7 +28,7 @@
 
 %% Hooks functions
 
--export([on_client_connected/3, on_client_disconnected/3]).
+-export([on_client_connected/3, on_client_disconnected/3, on_session_subscribed/4, on_message_publish/2]).
 
 %% API Function Exports
 -export([start_link/1]).
