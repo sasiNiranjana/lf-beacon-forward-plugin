@@ -1,6 +1,6 @@
-PROJECT = lf_emqtt_online_status_submit
-PROJECT_DESCRIPTION = Submitting console online status
-PROJECT_VERSION = 2.1.0
+PROJECT = lf_beacon_forward
+PROJECT_DESCRIPTION = Forwarding console beacons
+PROJECT_VERSION = 2.3.6
 
 BUILD_DEPS = emqttd cuttlefish
 dep_emqttd = git https://github.com/emqtt/emqttd master
