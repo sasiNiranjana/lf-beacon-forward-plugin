@@ -104,7 +104,7 @@ handle_cast({facility_topic_publish,ClientId,Topic}, _Tables = [beacon_tables,Cl
     [{ClientId,IP}] = ets:lookup(ClientsTableId,ClientId),
     Payload = list_to_binary("bft|lf/beacon/" ++ inet:ntoa(IP)),
     Msg = emqttd_message:make(lfbeacon,2,Topic,Payload),
-    emqttd:publish(Msg),
+    timer:apply_after(10000,emqttd,publish,[Msg]),
     {noreply, _Tables};
 handle_cast({beacon_forward,ClientId,Payload}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
     [{ClientId,IP}] = ets:lookup(ClientsTableId,ClientId),
