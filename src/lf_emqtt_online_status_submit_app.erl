@@ -21,12 +21,23 @@
 %% Application callbacks
 -export([start/2, stop/1]).
 
-start(_Type, _Args) ->
-    Env = application:get_all_env(lf_emqtt_online_status_submit),
-    {ok, Sup} = lf_emqtt_online_status_submit_sup:start_link(Env),
-    lf_emqtt_online_status_submit:load(Env),
-    {ok, Sup}.
+%% Define table names for storing client details for beacon forwarding
+-define(C, beacon_clients).
+-define(I, beacon_clients_ip_table).
 
+start(_Type, _Args) ->
+    ClientsTableId = ets:new(?C,[set,public]),
+    ClientsIPTableId = ets:new(?I,[bag,public]),
+    Tables = [beacon_tables,ClientsTableId,ClientsIPTableId],
+    {ok, Sup} = lf_emqtt_online_status_submit_sup:start_link(Tables),
+    lf_emqtt_online_status_submit:load(Tables),
+    {ok, Sup,Tables}.
+
+stop([beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    ets:delete(ClientsTableId),
+    ets:delete(ClientsIPTableId),
+    lf_emqtt_online_status_submit:unload(),
+    ok;
 stop(_State) ->
     lf_emqtt_online_status_submit:unload(),
     ok.

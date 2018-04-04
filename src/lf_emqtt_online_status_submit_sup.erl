@@ -24,9 +24,9 @@
 
 -define(M, lf_emqtt_online_status_submit).
 
-start_link(Env) ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, [Env]).
+start_link(Tables) ->
+	supervisor:start_link({local, ?MODULE}, ?MODULE, [Tables]).
 
-init([Env]) ->
+init([Tables]) ->
 	{ok, {{one_for_one, 10, 100}, [
-{?M, {?M, start_link, [Env]}, permanent, 5000, worker, [?M]}]}}.
+{?M, {?M, start_link, [Tables]}, permanent, 5000, worker, [?M]}]}}.

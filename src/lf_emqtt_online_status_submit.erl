@@ -40,34 +40,58 @@
 -record(state, {online_status}).
 
 %% Called when the plugin application start
-load(Env) ->
-    emqttd:hook('client.connected', fun ?MODULE:on_client_connected/3, [Env]),
-    emqttd:hook('client.disconnected', fun ?MODULE:on_client_disconnected/3, [Env]).
+load(Tables) ->
+    emqttd:hook('client.connected', fun ?MODULE:on_client_connected/3, [Tables]),
+    emqttd:hook('message.publish', fun ?MODULE:on_message_publish/2, [Tables]),
+    emqttd:hook('session.subscribed', fun ?MODULE:on_session_subscribed/4, [Tables]),
+    emqttd:hook('client.disconnected', fun ?MODULE:on_client_disconnected/3, [Tables]).
 
-on_client_connected(ConnAck, Client = #mqtt_client{client_id = ClientId}, _Env) ->
-    Server=proplists:get_value(server,_Env,"http://localhost:8080/lfservices/api/asset_online_status/emqtt_update_status"),
-    gen_server:cast(?MODULE,{lfsd,ClientId,Server,"true"}),
+on_client_connected(ConnAck, Client = #mqtt_client{client_id = ClientId, peername = {IP,_Port}}, [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    ets:insert(ClientsTableId,{ClientId,IP}),
+    ets:insert(ClientsIPTableId,{IP,ClientId}),
+    {ok, Client};
+on_client_connected(ConnAck, Client = #mqtt_client{client_id = ClientId}, _Tables) ->
     {ok, Client}.
 
-on_client_disconnected(Reason, _Client = #mqtt_client{client_id = ClientId}, _Env) ->
-    Server=proplists:get_value(server,_Env,"http://localhost:8080/lfservices/api/asset_online_status/emqtt_update_status"),
-    gen_server:cast(?MODULE,{lfsd,ClientId,Server,"false"}),
+on_client_disconnected(Reason, _Client = #mqtt_client{client_id = ClientId, peername = {IP,_Port}}, [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    ets:delete_object(ClientsTableId,{ClientId,IP}),
+    ets:delete_object(ClientsIPTableId,{IP,ClientId}),
+    ok;
+on_client_disconnected(Reason, _Client = #mqtt_client{client_id = ClientId}, _Tables) ->
     ok.
+
+%% Publish the general beacon facility topic for each equipment after they subscribed to their private topic
+on_session_subscribed(ClientId, Username, {Topic, Opts}, _Tables) ->
+    MatchTopic = list_to_binary([<<"e/">>, ClientId]),
+    if
+        (MatchTopic =:= Topic) -> 
+            gen_server:cast(?MODULE,{facility_topic_publish,ClientId,MatchTopic}),
+            {ok, {Topic, Opts}};
+        true -> 
+            {ok, {Topic, Opts}}
+    end.
+
+%% Check whether message is published to beacon topic
+on_message_publish(Message = #mqtt_message{topic = <<"lf/beacon">>, payload = Payload, from = {ClientId,_UserName}}, [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    gen_server:cast(?MODULE,{beacon_forward,ClientId,Payload}),
+    {ok, Message};
+on_message_publish(Message, _Tables) ->
+    {ok, Message}.
 
 %%--------------------------------------------------------------------
 %% API
 %%--------------------------------------------------------------------
 
 %% @doc Start the lf_emqtt_online_status_submit
--spec(start_link(Env :: list()) -> {ok, pid()} | ignore | {error, any()}).
-start_link(Env) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Env], []).
+-spec(start_link(Tables :: list()) -> {ok, pid()} | ignore | {error, any()}).
+start_link(Tables) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Tables], []).
 
 %%--------------------------------------------------------------------
 %% gen_server Callbacks
 %%--------------------------------------------------------------------
 
-init([_Env]) -> {ok,#state{}}.
+init([Tables]) -> {ok,Tables}.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
@@ -76,32 +100,20 @@ terminate(_Reason, _State) -> ok.
 handle_call(Req, _From, State) ->
     ?UNEXPECTED_REQ(Req, State).
 
-handle_cast({lfsd,ClientId,Server,Status}, State) ->
-    [EId|_] = string:split(ClientId,"|"),
-    Length = string:length(EId),
-    if
-	Length >= 6 ->
-	    A = binary_part(EId,{0,6}),B = <<"Nimbus">>,C = <<"nimbus">>,D = <<"NIMBUS">>,E = A/=B, F = A/=C, G = A/=D, H = E and F,
-	    if
-		G and H ->
-		    call_online_offline(EId,Status,Server),
-		    {noreply, State};
-		true ->
-		    {noreply, State}
-	    end;
-         true ->
-	 	call_online_offline(EId,Status,Server),
-		{noreply, State}
-     end;
+handle_cast({facility_topic_publish,ClientId,Topic}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    ets:lookup(ClientsTableId,ClientId) = {ClientId,IP},
+    Payload = list_to_binary("bft|lf/beacon/" ++ inet:ntoa(IP)),
+    Msg = emqttd_message:make(lfbeacon,2,Topic,Payload),
+    emqttd:publish(Msg),
+    {noreply, _Tables};
+handle_cast({beacon_forward,ClientId,Payload}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    ets:lookup(ClientsTableId,ClientId) = {ClientId,IP},
+    BeaconTopic = list_to_binary("lf/beacon/" ++ inet:ntoa(IP)),
+    Msg = emqttd_message:make(lfbeacon,2,BeaconTopic,Payload),
+    emqttd:publish(Msg),
+    {noreply, _Tables};
 handle_cast(Req, State) ->
      ?UNEXPECTED_REQ(Req, State).
-
-call_online_offline(ClientId,Status,Server) ->
-	ContentType="application/json",
-	Message = "{\"bodySerial\":\"" ++ binary_to_list(ClientId) ++ "\",\"status\":" ++ Status ++ "}",
-	inets:start(),
-	httpc:request(post,{Server,[],ContentType,Message},[],[]),
-	ok.
 
 handle_info(_, State) ->
     {noreply, State}.
@@ -109,4 +121,6 @@ handle_info(_, State) ->
 %% Called when the plugin application stop
 unload() ->
     emqttd:unhook('client.connected', fun ?MODULE:on_client_connected/3),
+    emqttd:unhook('message.publish', fun ?MODULE:on_message_publish/2),
+    emqttd:unhook('session.subscribed', fun ?MODULE:on_session_subscribed/4),
     emqttd:unhook('client.disconnected', fun ?MODULE:on_client_disconnected/3).
