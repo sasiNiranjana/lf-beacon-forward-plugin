@@ -139,7 +139,7 @@ handle_info(_, State) ->
 %%--------------------------------------------------------
 beacon_client_ip_list(Node,ClientId,Type,Payload) when Node =:= node() ->
     gen_server:cast(?MODULE,{beacon_client_ip,Type,ClientId,Payload});
-beacon_client_ip_list(Node,ClientId,Type) ->
+beacon_client_ip_list(Node,ClientId,Type,Payload) ->
     rpc_cast(Node, beacon_client_ip_list, [Node,ClientId,Type,Payload]).
 
 %%--------------------------------------------------------------------
