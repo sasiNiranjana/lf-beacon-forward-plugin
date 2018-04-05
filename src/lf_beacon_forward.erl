@@ -137,8 +137,8 @@ handle_info(_, State) ->
 %%--------------------------------------------------------
 beacon_client_ip_list(Node,ClientId) when Node =:= node() ->
     gen_server:call(?MODULE,{beacon_client_ip,ClientId});
-beacon_client_ip_list(Node, Key, PageNo, PageSize) ->
-    rpc_call(Node, client_list, [Node,ClientId]).
+beacon_client_ip_list(Node,ClientId) ->
+    rpc_call(Node, beacon_client_ip_list, [Node,ClientId]).
 
 %%--------------------------------------------------------------------
 %% Internel Functions.
