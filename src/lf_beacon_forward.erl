@@ -30,6 +30,9 @@
 
 -export([on_client_connected/3, on_client_disconnected/3, on_session_subscribed/4, on_message_publish/2]).
 
+%% Beacon Client Ip list rpc function Exports
+-export([beacon_client_ip_list/2]).
+
 %% API Function Exports
 -export([start_link/1]).
 
@@ -97,26 +100,54 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 terminate(_Reason, _State) -> ok.
 
+handle_call({beacon_client_ip,ClientId}, _From, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    case ets:lookup(ClientsTableId,ClientId) of
+        [] -> {reply, [], _Tables};
+        [{ClientId,IP}] -> {reply, [IP], _Tables}
+    end;
 handle_call(Req, _From, State) ->
     ?UNEXPECTED_REQ(Req, State).
 
 handle_cast({facility_topic_publish,ClientId,Topic}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
-    [{ClientId,IP}] = ets:lookup(ClientsTableId,ClientId),
-    Payload = list_to_binary("bft|lf/beacon/" ++ inet:ntoa(IP)),
-    Msg = emqttd_message:make(lfbeacon,2,Topic,Payload),
-    timer:apply_after(10000,emqttd,publish,[Msg]),
-    {noreply, _Tables};
+    case lists:flatten([beacon_client_ip_list(Node,ClientId)||Node <- ekka_mnesia:running_nodes()]) of
+        [] -> {noreply, _Tables};
+        [IP] ->
+            Payload = list_to_binary("bft|lf/beacon/" ++ inet:ntoa(IP)),
+            Msg = emqttd_message:make(lfbeacon,2,Topic,Payload),
+            timer:apply_after(10000,emqttd,publish,[Msg]),
+            {noreply, _Tables}
+    end;
 handle_cast({beacon_forward,ClientId,Payload}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
-    [{ClientId,IP}] = ets:lookup(ClientsTableId,ClientId),
-    BeaconTopic = list_to_binary("lf/beacon/" ++ inet:ntoa(IP)),
-    Msg = emqttd_message:make(lfbeacon,2,BeaconTopic,Payload),
-    emqttd:publish(Msg),
-    {noreply, _Tables};
+    case lists:flatten([beacon_client_ip_list(Node,ClientId)||Node <- ekka_mnesia:running_nodes()]) of
+        [] -> {noreply, _Tables};
+        [IP] ->
+           BeaconTopic = list_to_binary("lf/beacon/" ++ inet:ntoa(IP)),
+           Msg = emqttd_message:make(lfbeacon,2,BeaconTopic,Payload),
+           emqttd:publish(Msg),
+           {noreply, _Tables}
+    end;
 handle_cast(Req, State) ->
      ?UNEXPECTED_REQ(Req, State).
 
 handle_info(_, State) ->
     {noreply, State}.
+
+%%--------------------------------------------------------
+%% beacon client ip
+%%--------------------------------------------------------
+beacon_client_ip_list(Node,ClientId) when Node =:= node() ->
+    gen_server:call(?MODULE,{beacon_client_ip,ClientId});
+beacon_client_ip_list(Node, Key, PageNo, PageSize) ->
+    rpc_call(Node, client_list, [Node,ClientId]).
+
+%%--------------------------------------------------------------------
+%% Internel Functions.
+%%--------------------------------------------------------------------
+rpc_call(Node, Fun, Args) ->
+    case rpc:call(Node, ?MODULE, Fun, Args) of
+        {badrpc, Reason} -> [];
+        Res -> Res
+    end.
 
 %% Called when the plugin application stop
 unload() ->
