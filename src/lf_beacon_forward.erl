@@ -31,7 +31,7 @@
 -export([on_client_connected/3, on_client_disconnected/3, on_session_subscribed/4, on_message_publish/2]).
 
 %% Beacon Client Ip list rpc function Exports
--export([beacon_client_ip_list/2]).
+-export([beacon_client_ip_list/4]).
 
 %% API Function Exports
 -export([start_link/1]).
@@ -100,32 +100,34 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 terminate(_Reason, _State) -> ok.
 
-handle_call({beacon_client_ip,ClientId}, _From, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
-    case ets:lookup(ClientsTableId,ClientId) of
-        [] -> {reply, [], _Tables};
-        [{ClientId,IP}] -> {reply, [IP], _Tables}
-    end;
 handle_call(Req, _From, State) ->
     ?UNEXPECTED_REQ(Req, State).
 
-handle_cast({facility_topic_publish,ClientId,Topic}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
-    case lists:flatten([beacon_client_ip_list(Node,ClientId)||Node <- ekka_mnesia:running_nodes()]) of
+handle_cast({beacon_client_ip,facility_topic_publish,ClientId,_PayloadSuplied}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    case ets:lookup(ClientsTableId,ClientId) of
         [] -> {noreply, _Tables};
-        [IP] ->
+        [{ClientId,IP}] ->
+            Topic = list_to_binary([<<"e/">>, ClientId]),
             Payload = list_to_binary("bft|lf/beacon/" ++ inet:ntoa(IP)),
             Msg = emqttd_message:make(lfbeacon,2,Topic,Payload),
-            timer:apply_after(10000,emqttd,publish,[Msg]),
+            timer:apply_after(5000,emqttd,publish,[Msg]),
             {noreply, _Tables}
     end;
-handle_cast({beacon_forward,ClientId,Payload}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
-    case lists:flatten([beacon_client_ip_list(Node,ClientId)||Node <- ekka_mnesia:running_nodes()]) of
+handle_cast({beacon_client_ip,beacon_forward,ClientId,Payload}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    case ets:lookup(ClientsTableId,ClientId) of
         [] -> {noreply, _Tables};
-        [IP] ->
-           BeaconTopic = list_to_binary("lf/beacon/" ++ inet:ntoa(IP)),
-           Msg = emqttd_message:make(lfbeacon,2,BeaconTopic,Payload),
-           emqttd:publish(Msg),
-           {noreply, _Tables}
+        [{ClientId,IP}] -> 
+            BeaconTopic = list_to_binary("lf/beacon/" ++ inet:ntoa(IP)),
+            Msg = emqttd_message:make(lfbeacon,2,BeaconTopic,Payload),
+            emqttd:publish(Msg),
+            {noreply, _Tables}
     end;
+handle_cast({facility_topic_publish,ClientId,Topic}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    Outcome = [beacon_client_ip_list(Node,ClientId,facility_topic_publish,<<"">>)||Node <- ekka_mnesia:running_nodes()],
+    {noreply, _Tables};
+handle_cast({beacon_forward,ClientId,Payload}, _Tables = [beacon_tables,ClientsTableId,ClientsIPTableId]) ->
+    Outcome = [beacon_client_ip_list(Node,ClientId,beacon_forward,Payload)||Node <- ekka_mnesia:running_nodes()],
+    {noreply, _Tables};
 handle_cast(Req, State) ->
      ?UNEXPECTED_REQ(Req, State).
 
@@ -135,19 +137,16 @@ handle_info(_, State) ->
 %%--------------------------------------------------------
 %% beacon client ip
 %%--------------------------------------------------------
-beacon_client_ip_list(Node,ClientId) when Node =:= node() ->
-    gen_server:call(?MODULE,{beacon_client_ip,ClientId},60000);
-beacon_client_ip_list(Node,ClientId) ->
-    rpc_call(Node, beacon_client_ip_list, [Node,ClientId]).
+beacon_client_ip_list(Node,ClientId,Type,Payload) when Node =:= node() ->
+    gen_server:cast(?MODULE,{beacon_client_ip,Type,ClientId,Payload});
+beacon_client_ip_list(Node,ClientId,Type) ->
+    rpc_cast(Node, beacon_client_ip_list, [Node,ClientId,Type,Payload]).
 
 %%--------------------------------------------------------------------
 %% Internel Functions.
 %%--------------------------------------------------------------------
-rpc_call(Node, Fun, Args) ->
-    case rpc:call(Node, ?MODULE, Fun, Args) of
-        {badrpc, Reason} -> [];
-        Res -> Res
-    end.
+rpc_cast(Node, Fun, Args) ->
+    rpc:cast(Node, ?MODULE, Fun, Args).
 
 %% Called when the plugin application stop
 unload() ->
