@@ -136,7 +136,7 @@ handle_info(_, State) ->
 %% beacon client ip
 %%--------------------------------------------------------
 beacon_client_ip_list(Node,ClientId) when Node =:= node() ->
-    gen_server:call(?MODULE,{beacon_client_ip,ClientId});
+    gen_server:call(?MODULE,{beacon_client_ip,ClientId},infinity);
 beacon_client_ip_list(Node,ClientId) ->
     rpc_call(Node, beacon_client_ip_list, [Node,ClientId]).
 
